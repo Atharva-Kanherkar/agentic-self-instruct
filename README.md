@@ -167,6 +167,40 @@ The seed-construction command writes:
 - `signals.json`: web-search signals used by the seed-constructor stage
 - `summary.json`: accepted count, rejected count, attempts, target status, and signal count
 
+## Measuring Dataset Quality
+
+Not every synthetic dataset is worth training on. The cheap signal that a DataSmith dataset is
+useful is the **weak-strong gap**: the average score separation between the weak solver (the model
+you want to improve) and the strong solver across accepted examples. Every run reports it as
+`avg_gap` in `summary.json`, computed without any training.
+
+A high gap means the dataset is concentrated on the target model's failure frontier: tasks the weak
+solver gets wrong but a stronger path gets right. That is exactly the data that moves the needle in
+fine-tuning. A gap near zero means the examples are things the model already handles, so training on
+them mostly wastes compute.
+
+For scale, the Autodata paper reports the gap widening from 0.019 with prompt-only self-instruct to
+0.314 with the weak-vs-strong loop on CS research QA. The larger the separation your run produces,
+the more targeted the data.
+
+Read it from a run:
+
+```bash
+datasmith run --seeds examples/seeds.jsonl --output-dir runs/demo --target-count 2 --local-demo
+jq '.avg_gap' runs/demo/summary.json
+```
+
+Or from the SDK:
+
+```python
+result = runner.run(read_jsonl("examples/seeds.jsonl"), target_count=2)
+print(result.summary()["avg_gap"])
+```
+
+This number is an intrinsic proxy. The deterministic demo models are illustrative only; a meaningful
+gap requires real strong solver and judge models wired through the SDK. The extrinsic proof, a
+downstream accuracy lift from fine-tuning on the data, is a separate measurement.
+
 ## Bring Your Own Models
 
 Any object with this method can act as a challenger, solver, or judge:
