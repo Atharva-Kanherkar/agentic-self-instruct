@@ -1,0 +1,28 @@
+{
+  "benchmark": "GSM8K fixed subset",
+  "eval_indices": "test[0:100]",
+  "metric": "exact final numeric answer match",
+  "base_model": {
+    "name": "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit",
+    "correct": 34,
+    "n": 100,
+    "accuracy": 0.34
+  },
+  "datasmith_dpo_model": {
+    "name": "Qwen2.5-1.5B-Instruct + DataSmith DPO LoRA",
+    "correct": 43,
+    "n": 100,
+    "accuracy": 0.43,
+    "train_examples": 68,
+    "train_steps": 80
+  },
+  "delta": {
+    "correct": 9,
+    "accuracy": 0.09
+  },
+  "dataset": {
+    "kaggle": "https://www.kaggle.com/datasets/atharvakanherkara/datasmith-math-78-dpo",
+    "raw_records": 78,
+    "filtered_records": 68
+  }
+}

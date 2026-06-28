@@ -255,6 +255,11 @@ This number is an intrinsic proxy. The deterministic demo models are illustrativ
 gap requires real strong solver and judge models wired through the SDK. The extrinsic proof, a
 downstream accuracy lift from fine-tuning on the data, is a separate measurement.
 
+Pilot benchmark: DPO-tuning `Qwen2.5-1.5B-Instruct` on 68 filtered DataSmith preference pairs
+improved exact-match accuracy on GSM8K test indices `0-99` from `34%` to `43%`. See
+[`docs/benchmarks/gsm8k-qwen-dpo.md`](docs/benchmarks/gsm8k-qwen-dpo.md) for methodology, failed
+SFT pilots, and reproduction notes.
+
 ## Bring Your Own Models
 
 Any object with this method can act as a challenger, solver, or judge:
