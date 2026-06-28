@@ -44,11 +44,31 @@ def dpo_example(
     )
 
 
+def sft_expected_example() -> Example:
+    return Example(
+        input={"prompt": "Apply the refund policy"},
+        expected={"answer": "Deny the refund"},
+        metadata={
+            "system": "Follow the support policy.",
+            "generator": "datasmith",
+            "judge": {
+                "gap": 0.5,
+                "weak_score": 0.1,
+                "strong_score": 0.6,
+                "quality": "high",
+                "tags": ["refunds"],
+                "reason": "extra field omitted",
+            },
+        },
+    )
+
+
 def test_export_registries_expose_raw_and_local() -> None:
-    assert export_formats() == ["dpo", "messages", "prompt_completion", "raw"]
+    assert export_formats() == ["dpo", "messages", "prompt_completion", "raw", "sft"]
     assert export_destinations() == ["local"]
     assert get_format("dpo")
     assert get_format("raw")
+    assert get_format("sft")
     assert get_format("prompt_completion")
     assert get_format("messages")
     assert get_destination("local")
@@ -57,7 +77,7 @@ def test_export_registries_expose_raw_and_local() -> None:
 def test_unknown_export_format_lists_valid_choices() -> None:
     with pytest.raises(
         ValueError,
-        match="unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw",
+        match="unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw, sft",
     ):
         get_format("nope")
 
@@ -316,6 +336,119 @@ def test_dpo_export_skips_identical_chosen_and_rejected(tmp_path) -> None:
     assert result.skip_reasons == {"identical chosen/rejected": 1}
 
 
+def test_sft_sharegpt_export_writes_expected_answer_with_metadata(tmp_path) -> None:
+    output = tmp_path / "sft.jsonl"
+
+    result = export_examples(
+        [sft_expected_example()],
+        format_name="sft",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 1
+    assert result.skipped == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "conversations": [
+            {"from": "system", "value": "Follow the support policy."},
+            {"from": "human", "value": "Apply the refund policy"},
+            {"from": "gpt", "value": '{"answer":"Deny the refund"}'},
+        ],
+        "metadata": {
+            "gap": 0.5,
+            "weak_score": 0.1,
+            "strong_score": 0.6,
+            "quality": "high",
+            "tags": ["refunds"],
+            "generator": "datasmith",
+        },
+    }
+
+
+def test_sft_chatml_export_uses_strong_attempt_when_expected_missing(tmp_path) -> None:
+    output = tmp_path / "sft.jsonl"
+
+    result = export_examples(
+        [dpo_example(strong="Use the policy exception.")],
+        format_name="sft",
+        destination_name="local",
+        output=output,
+        chat_template="chatml",
+    )
+
+    assert result.records == 1
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "messages": [
+            {"role": "user", "content": "Explain the refund decision"},
+            {"role": "assistant", "content": "Use the policy exception."},
+        ],
+        "metadata": {
+            "gap": 0.4,
+            "weak_score": 0.2,
+            "strong_score": 0.6,
+            "quality": "high",
+            "tags": ["refunds"],
+        },
+    }
+
+
+def test_sft_export_skips_when_no_assistant_output(tmp_path) -> None:
+    output = tmp_path / "sft.jsonl"
+
+    result = export_examples(
+        [Example(input="Prompt", metadata={})],
+        format_name="sft",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 0
+    assert result.skipped == 1
+    assert result.skip_reasons == {"no assistant output": 1}
+    assert output.read_text(encoding="utf-8") == ""
+
+
+def test_sft_export_reports_prompt_json_fallback_notice(tmp_path) -> None:
+    output = tmp_path / "sft.jsonl"
+
+    result = export_examples(
+        [Example(input={"task": "classify", "labels": ["yes", "no"]}, expected="yes")],
+        format_name="sft",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 1
+    assert result.notices == {"prompt JSON fallback": 1}
+    assert json.loads(output.read_text(encoding="utf-8"))["conversations"][0] == {
+        "from": "human",
+        "value": '{"labels":["yes","no"],"task":"classify"}',
+    }
+
+
+def test_sft_chat_template_validation(tmp_path) -> None:
+    with pytest.raises(
+        ValueError,
+        match="unknown chat template: llama. Valid chat templates: chatml, sharegpt",
+    ):
+        export_examples(
+            [sft_expected_example()],
+            format_name="sft",
+            destination_name="local",
+            output=tmp_path / "out.jsonl",
+            chat_template="llama",
+        )
+
+    with pytest.raises(ValueError, match="--chat-template is only supported with format sft"):
+        export_examples(
+            [sft_expected_example()],
+            format_name="raw",
+            destination_name="local",
+            output=tmp_path / "out.jsonl",
+            chat_template="chatml",
+        )
+
+
 def test_conversational_flag_requires_dpo_format(tmp_path) -> None:
     with pytest.raises(ValueError, match="--conversational is only supported with format dpo"):
         export_examples(
@@ -432,7 +565,7 @@ def test_cli_export_unknown_format_exits_with_valid_choices(tmp_path) -> None:
         )
 
     assert str(exc.value) == (
-        "unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw"
+        "unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw, sft"
     )
 
 
@@ -539,3 +672,117 @@ def test_cli_export_dpo_conversational(tmp_path) -> None:
     assert isinstance(record["prompt"], list)
     assert isinstance(record["chosen"], list)
     assert isinstance(record["rejected"], list)
+
+
+def test_cli_export_sft_sharegpt_reports_notice(tmp_path, capsys) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "accepted.jsonl").write_text(
+        json.dumps(
+            Example(input={"task": "classify", "labels": ["yes", "no"]}, expected="yes").to_dict()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "sft.jsonl"
+
+    assert (
+        main(
+            [
+                "export",
+                "--from",
+                str(run_dir),
+                "--format",
+                "sft",
+                "--chat-template",
+                "sharegpt",
+                "--to",
+                "local",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert "conversations" in record
+    assert capsys.readouterr().out.strip() == (
+        f"exported 1 records to {output} (notices: 1 prompt JSON fallback)"
+    )
+
+
+def test_cli_export_sft_chatml_from_direct_jsonl(tmp_path) -> None:
+    accepted = tmp_path / "accepted.jsonl"
+    accepted.write_text(json.dumps(dpo_example(strong="Strong reference").to_dict()) + "\n", encoding="utf-8")
+    output = tmp_path / "sft.jsonl"
+
+    assert (
+        main(
+            [
+                "export",
+                "--from",
+                str(accepted),
+                "--format",
+                "sft",
+                "--chat-template",
+                "chatml",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads(output.read_text(encoding="utf-8"))["messages"][-1] == {
+        "role": "assistant",
+        "content": "Strong reference",
+    }
+
+
+def test_cli_export_sft_reports_skipped_examples(tmp_path, capsys) -> None:
+    accepted = tmp_path / "accepted.jsonl"
+    accepted.write_text(json.dumps(Example(input="Prompt", metadata={}).to_dict()) + "\n", encoding="utf-8")
+    output = tmp_path / "sft.jsonl"
+
+    assert (
+        main(
+            [
+                "export",
+                "--from",
+                str(accepted),
+                "--format",
+                "sft",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert output.read_text(encoding="utf-8") == ""
+    assert capsys.readouterr().out.strip() == (
+        f"exported 0 records to {output} (skipped 1: 1 no assistant output)"
+    )
+
+
+def test_cli_export_rejects_chat_template_for_non_sft(tmp_path) -> None:
+    accepted = tmp_path / "accepted.jsonl"
+    accepted.write_text(json.dumps(Example(input="Prompt", metadata={}).to_dict()) + "\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "export",
+                "--from",
+                str(accepted),
+                "--format",
+                "raw",
+                "--chat-template",
+                "chatml",
+                "--output",
+                str(tmp_path / "out.jsonl"),
+            ]
+        )
+
+    assert str(exc.value) == "--chat-template is only supported with format sft"

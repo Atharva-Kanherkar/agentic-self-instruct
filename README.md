@@ -184,6 +184,19 @@ answer is the first weak-solver attempt. Examples without solver attempts, empty
 identical chosen/rejected text are skipped and counted in the CLI summary. Add `--conversational` to
 emit TRL's role/content array form for `prompt`, `chosen`, and `rejected`.
 
+Use `--format sft` for conversational supervised fine-tuning records. ShareGPT is the default, and
+ChatML is available with `--chat-template chatml`:
+
+```bash
+datasmith export --from runs/demo --format sft --chat-template sharegpt --to local --output runs/demo/sft.jsonl
+datasmith export --from runs/demo --format sft --chat-template chatml --to local --output runs/demo/sft-chatml.jsonl
+```
+
+SFT export writes a single-turn conversation with an optional system turn from
+`metadata["system"]`, a user turn from `render_prompt(example)`, and an assistant turn from
+`example.expected` or the first strong-solver attempt when no expected answer is present. Examples
+without either assistant source are skipped and counted.
+
 The seed-construction command writes:
 
 - `seeds.jsonl`: accepted seed examples

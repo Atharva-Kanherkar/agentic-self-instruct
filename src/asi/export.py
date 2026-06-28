@@ -21,11 +21,13 @@ DEFAULT_PROMPT_KEYS = (
 FormatSerializer = Callable[["ExportOptions", Example], Iterable[Mapping[str, Any]]]
 DestinationWriter = Callable[[Iterable[Mapping[str, Any]], str | Path], int]
 PROVENANCE_KEYS = ("gap", "weak_score", "strong_score", "quality", "tags")
+CHAT_TEMPLATES = ("chatml", "sharegpt")
 
 
 @dataclass(frozen=True, slots=True)
 class ExportOptions:
     conversational: bool = False
+    chat_template: str = "sharegpt"
 
 
 @dataclass(slots=True)
@@ -33,14 +35,23 @@ class ExportResult:
     records: int
     skipped: int = 0
     skip_reasons: dict[str, int] = field(default_factory=dict)
+    notices: dict[str, int] = field(default_factory=dict)
 
     def summary(self, output: str | Path) -> str:
         message = f"exported {self.records} records to {output}"
+        details: list[str] = []
         if self.skipped:
             reasons = ", ".join(
                 f"{count} {reason}" for reason, count in sorted(self.skip_reasons.items())
             )
-            message += f" (skipped {self.skipped}: {reasons})"
+            details.append(f"skipped {self.skipped}: {reasons}")
+        if self.notices:
+            notices = ", ".join(
+                f"{count} {reason}" for reason, count in sorted(self.notices.items())
+            )
+            details.append(f"notices: {notices}")
+        if details:
+            message += f" ({'; '.join(details)})"
         return message
 
 
@@ -87,15 +98,24 @@ def export_examples(
     destination_name: str,
     output: str | Path,
     conversational: bool = False,
+    chat_template: str = "sharegpt",
 ) -> ExportResult:
+    chat_template = _validate_chat_template(chat_template)
     if conversational and format_name != "dpo":
         raise ValueError("--conversational is only supported with format dpo")
+    if chat_template != "sharegpt" and format_name != "sft":
+        raise ValueError("--chat-template is only supported with format sft")
     serializer = get_format(format_name)
     writer = get_destination(destination_name)
     stats = _ExportStats()
-    options = ExportOptions(conversational=conversational)
-    records = writer(_serialize_examples(examples, serializer, options, stats), output)
-    return ExportResult(records=records, skipped=stats.skipped, skip_reasons=stats.skip_reasons)
+    options = ExportOptions(conversational=conversational, chat_template=chat_template)
+    records = writer(_serialize_examples(examples, serializer, options, stats, format_name), output)
+    return ExportResult(
+        records=records,
+        skipped=stats.skipped,
+        skip_reasons=stats.skip_reasons,
+        notices=stats.notices,
+    )
 
 
 def export_formats() -> list[str]:
@@ -173,6 +193,37 @@ def dpo_serializer(options: ExportOptions, example: Example) -> Iterable[JSON]:
     }
 
 
+def sft_serializer(options: ExportOptions, example: Example) -> Iterable[JSON]:
+    prompt = render_prompt(example)
+    assistant = _sft_assistant_output(example)
+    system = _system_content(example)
+    metadata = _sft_metadata(example)
+
+    if options.chat_template == "chatml":
+        messages = []
+        if system is not None:
+            messages.append({"role": "system", "content": system})
+        messages.extend(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": assistant},
+            ]
+        )
+        yield {"messages": messages, "metadata": metadata}
+        return
+
+    conversations = []
+    if system is not None:
+        conversations.append({"from": "system", "value": system})
+    conversations.extend(
+        [
+            {"from": "human", "value": prompt},
+            {"from": "gpt", "value": assistant},
+        ]
+    )
+    yield {"conversations": conversations, "metadata": metadata}
+
+
 def write_local_jsonl(records: Iterable[Mapping[str, Any]], output: str | Path) -> int:
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +240,7 @@ FORMAT_REGISTRY: dict[str, FormatSerializer] = {
     "messages": messages_serializer,
     "prompt_completion": prompt_completion_serializer,
     "raw": raw_serializer,
+    "sft": sft_serializer,
 }
 DESTINATION_REGISTRY: dict[str, DestinationWriter] = {
     "local": write_local_jsonl,
@@ -200,6 +252,7 @@ def _serialize_examples(
     serializer: FormatSerializer,
     options: ExportOptions,
     stats: "_ExportStats",
+    format_name: str,
 ) -> Iterable[Mapping[str, Any]]:
     for example in examples:
         try:
@@ -207,6 +260,8 @@ def _serialize_examples(
         except SkipExample as exc:
             stats.skip(exc.reason)
             continue
+        if format_name == "sft" and _uses_prompt_json_fallback(example):
+            stats.notice("prompt JSON fallback")
         yield from records
 
 
@@ -245,6 +300,18 @@ def _first_attempt_output(example: Example, key: str) -> str:
     return output
 
 
+def _sft_assistant_output(example: Example) -> str:
+    if example.expected is not None:
+        output = render_completion(example).strip()
+        if output:
+            return output
+        raise SkipExample("no assistant output")
+    try:
+        return _first_attempt_output(example, "strong_attempts")
+    except SkipExample as exc:
+        raise SkipExample("no assistant output") from exc
+
+
 def _dpo_metadata(example: Example) -> JSON:
     judge = example.metadata.get("judge")
     if not isinstance(judge, Mapping):
@@ -252,14 +319,48 @@ def _dpo_metadata(example: Example) -> JSON:
     return {key: judge[key] for key in PROVENANCE_KEYS if key in judge}
 
 
+def _sft_metadata(example: Example) -> JSON:
+    metadata = _dpo_metadata(example)
+    if "generator" in example.metadata:
+        metadata["generator"] = example.metadata["generator"]
+    return metadata
+
+
+def _system_content(example: Example) -> str | None:
+    value = example.metadata.get("system")
+    if value in (None, ""):
+        return None
+    text = _stringify_prompt_value(value).strip()
+    return text or None
+
+
+def _uses_prompt_json_fallback(example: Example) -> bool:
+    value = example.input
+    if not isinstance(value, dict):
+        return False
+    return not any(key in value and value[key] not in (None, "") for key in DEFAULT_PROMPT_KEYS)
+
+
+def _validate_chat_template(name: str) -> str:
+    if name not in CHAT_TEMPLATES:
+        raise ValueError(
+            f"unknown chat template: {name}. Valid chat templates: {', '.join(CHAT_TEMPLATES)}"
+        )
+    return name
+
+
 @dataclass(slots=True)
 class _ExportStats:
     skipped: int = 0
     skip_reasons: dict[str, int] = field(default_factory=dict)
+    notices: dict[str, int] = field(default_factory=dict)
 
     def skip(self, reason: str) -> None:
         self.skipped += 1
         self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
+
+    def notice(self, reason: str) -> None:
+        self.notices[reason] = self.notices.get(reason, 0) + 1
 
 
 def _compact_json(value: Any) -> str:
