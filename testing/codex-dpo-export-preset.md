@@ -13,6 +13,9 @@
 - Skips are counted and surfaced in the CLI summary line; they are not silently dropped.
 - `--conversational` with `--format dpo` emits TRL conversational preference records where `prompt`, `chosen`, and `rejected` are role/content arrays.
 - `--conversational` is rejected for non-DPO formats with a clear error.
+- The public SDK export API has one entrypoint: `export_examples(...) -> ExportResult`.
+- Serializer skip handling cannot write a partial record before counting a skip.
+- Whitespace-only solver attempt outputs are treated as missing solver attempts.
 
 ## Unit Tests
 
@@ -21,6 +24,8 @@
 - `tests/test_export.py` covers conversational DPO serialization.
 - `tests/test_export.py` covers skip cases: missing attempts, empty attempts, identical chosen/rejected output.
 - `tests/test_export.py` covers DPO metadata provenance.
+- `tests/test_export.py` covers `export_examples(...)` returning an `ExportResult`.
+- `tests/test_export.py` covers whitespace-only solver attempt skips.
 
 ## Integration / Functional Tests
 
