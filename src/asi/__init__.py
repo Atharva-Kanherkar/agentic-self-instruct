@@ -2,8 +2,10 @@
 
 from asi.core import AgenticSelfInstruct, AcceptancePolicy
 from asi.export import (
+    ExportResult,
     export_destinations,
     export_examples,
+    export_examples_with_summary,
     export_formats,
     render_completion,
     render_prompt,
@@ -37,8 +39,10 @@ __all__ = [
     "DeterministicSeedJudge",
     "DeterministicSolver",
     "Example",
+    "ExportResult",
     "export_destinations",
     "export_examples",
+    "export_examples_with_summary",
     "export_formats",
     "JudgeVerdict",
     "RejectedSeed",

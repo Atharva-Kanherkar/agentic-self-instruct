@@ -8,6 +8,7 @@ from asi.cli import main
 from asi.export import (
     export_destinations,
     export_examples,
+    export_examples_with_summary,
     export_formats,
     get_destination,
     get_format,
@@ -17,9 +18,36 @@ from asi.export import (
 from asi.types import Example
 
 
+def dpo_example(
+    *,
+    weak: str = "Weak answer",
+    strong: str = "Strong answer",
+    metadata: dict | None = None,
+) -> Example:
+    return Example(
+        input={"prompt": "Explain the refund decision"},
+        metadata={
+            "weak_attempts": [{"role": "weak", "output": weak, "attempt": 1, "metadata": {}}],
+            "strong_attempts": [
+                {"role": "strong", "output": strong, "attempt": 1, "metadata": {}}
+            ],
+            "judge": {
+                "gap": 0.4,
+                "weak_score": 0.2,
+                "strong_score": 0.6,
+                "quality": "high",
+                "tags": ["refunds"],
+                "reason": "extra field omitted",
+            },
+            **(metadata or {}),
+        },
+    )
+
+
 def test_export_registries_expose_raw_and_local() -> None:
-    assert export_formats() == ["messages", "prompt_completion", "raw"]
+    assert export_formats() == ["dpo", "messages", "prompt_completion", "raw"]
     assert export_destinations() == ["local"]
+    assert get_format("dpo")
     assert get_format("raw")
     assert get_format("prompt_completion")
     assert get_format("messages")
@@ -29,7 +57,7 @@ def test_export_registries_expose_raw_and_local() -> None:
 def test_unknown_export_format_lists_valid_choices() -> None:
     with pytest.raises(
         ValueError,
-        match="unknown export format: nope. Valid formats: messages, prompt_completion, raw",
+        match="unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw",
     ):
         get_format("nope")
 
@@ -132,6 +160,122 @@ def test_messages_export_writes_chat_records_without_metadata(tmp_path) -> None:
             {"role": "assistant", "content": "Answer"},
         ]
     }
+
+
+def test_dpo_export_writes_preference_records_with_metadata(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+
+    count = export_examples(
+        [dpo_example()],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+    )
+
+    assert count == 1
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "prompt": "Explain the refund decision",
+        "chosen": "Strong answer",
+        "rejected": "Weak answer",
+        "metadata": {
+            "gap": 0.4,
+            "weak_score": 0.2,
+            "strong_score": 0.6,
+            "quality": "high",
+            "tags": ["refunds"],
+        },
+    }
+
+
+def test_dpo_export_uses_first_solver_attempts(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+    example = dpo_example()
+    example.metadata["weak_attempts"].append(
+        {"role": "weak", "output": "Second weak answer", "attempt": 2, "metadata": {}}
+    )
+    example.metadata["strong_attempts"].append(
+        {"role": "strong", "output": "Second strong answer", "attempt": 2, "metadata": {}}
+    )
+
+    export_examples([example], format_name="dpo", destination_name="local", output=output)
+
+    assert json.loads(output.read_text(encoding="utf-8"))["chosen"] == "Strong answer"
+    assert json.loads(output.read_text(encoding="utf-8"))["rejected"] == "Weak answer"
+
+
+def test_dpo_conversational_export_writes_message_arrays(tmp_path) -> None:
+    output = tmp_path / "dpo-messages.jsonl"
+
+    count = export_examples(
+        [dpo_example()],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+        conversational=True,
+    )
+
+    assert count == 1
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert record["prompt"] == [{"role": "user", "content": "Explain the refund decision"}]
+    assert record["chosen"] == [{"role": "assistant", "content": "Strong answer"}]
+    assert record["rejected"] == [{"role": "assistant", "content": "Weak answer"}]
+
+
+def test_dpo_export_skips_missing_solver_attempts(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+
+    result = export_examples_with_summary(
+        [Example(input="Prompt", metadata={})],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 0
+    assert result.skipped == 1
+    assert result.skip_reasons == {"no solver attempts": 1}
+    assert output.read_text(encoding="utf-8") == ""
+
+
+def test_dpo_export_skips_empty_solver_attempts(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+
+    result = export_examples_with_summary(
+        [dpo_example(metadata={"weak_attempts": []})],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 0
+    assert result.skipped == 1
+    assert result.skip_reasons == {"no solver attempts": 1}
+
+
+def test_dpo_export_skips_identical_chosen_and_rejected(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+
+    result = export_examples_with_summary(
+        [dpo_example(weak="Same answer", strong="Same answer")],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 0
+    assert result.skipped == 1
+    assert result.skip_reasons == {"identical chosen/rejected": 1}
+
+
+def test_conversational_flag_requires_dpo_format(tmp_path) -> None:
+    with pytest.raises(ValueError, match="--conversational is only supported with format dpo"):
+        export_examples(
+            [Example(input="Question", expected="Answer")],
+            format_name="messages",
+            destination_name="local",
+            output=tmp_path / "out.jsonl",
+            conversational=True,
+        )
 
 
 def test_trainer_formats_require_expected_output(tmp_path) -> None:
@@ -239,7 +383,7 @@ def test_cli_export_unknown_format_exits_with_valid_choices(tmp_path) -> None:
         )
 
     assert str(exc.value) == (
-        "unknown export format: nope. Valid formats: messages, prompt_completion, raw"
+        "unknown export format: nope. Valid formats: dpo, messages, prompt_completion, raw"
     )
 
 
@@ -281,3 +425,68 @@ def test_cli_export_bad_jsonl_exits_cleanly(tmp_path) -> None:
         )
 
     assert str(exc.value) == "example is missing required field: input"
+
+
+def test_cli_export_dpo_reports_skipped_examples(tmp_path, capsys) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "accepted.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(dpo_example().to_dict()),
+                json.dumps(Example(input="Prompt", metadata={}).to_dict()),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "dpo.jsonl"
+
+    assert (
+        main(
+            [
+                "export",
+                "--from",
+                str(run_dir),
+                "--format",
+                "dpo",
+                "--to",
+                "local",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads(output.read_text(encoding="utf-8"))["chosen"] == "Strong answer"
+    assert capsys.readouterr().out.strip() == (
+        f"exported 1 records to {output} (skipped 1: 1 no solver attempts)"
+    )
+
+
+def test_cli_export_dpo_conversational(tmp_path) -> None:
+    accepted = tmp_path / "accepted.jsonl"
+    accepted.write_text(json.dumps(dpo_example().to_dict()) + "\n", encoding="utf-8")
+    output = tmp_path / "dpo.jsonl"
+
+    assert (
+        main(
+            [
+                "export",
+                "--from",
+                str(accepted),
+                "--format",
+                "dpo",
+                "--conversational",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert isinstance(record["prompt"], list)
+    assert isinstance(record["chosen"], list)
+    assert isinstance(record["rejected"], list)

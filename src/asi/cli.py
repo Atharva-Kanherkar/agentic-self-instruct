@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from asi.core import AgenticSelfInstruct
-from asi.export import export_destinations, export_examples, export_formats
+from asi.export import export_destinations, export_examples_with_summary, export_formats
 from asi.io import (
     export_run_result,
     export_seed_construction_result,
@@ -76,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Export destination: {', '.join(export_destinations())}",
     )
     export_parser.add_argument("--output", required=True)
+    export_parser.add_argument(
+        "--conversational",
+        action="store_true",
+        help="Emit conversational preference records for format dpo",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -127,15 +132,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "export":
         try:
             examples = read_jsonl(_export_input_path(args.from_path))
-            record_count = export_examples(
+            result = export_examples_with_summary(
                 examples,
                 format_name=args.format,
                 destination_name=args.destination,
                 output=args.output,
+                conversational=args.conversational,
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-        print(f"exported {record_count} records to {args.output}")
+        print(result.summary(args.output))
         return 0
     return 1
 
