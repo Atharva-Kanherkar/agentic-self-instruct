@@ -67,6 +67,19 @@ def render_prompt(
     return _stringify_prompt_value(value)
 
 
+def render_messages(example: Example) -> list[JSON]:
+    """Return trainer messages, preserving existing role/content arrays when present."""
+    value = example.input
+    if isinstance(value, list) and _is_message_list(value):
+        return [dict(message) for message in value]
+    if isinstance(value, dict):
+        for key in DEFAULT_PROMPT_KEYS:
+            nested = value.get(key)
+            if isinstance(nested, list) and _is_message_list(nested):
+                return [dict(message) for message in nested]
+    return [{"role": "user", "content": render_prompt(example)}]
+
+
 def export_examples(
     examples: Iterable[Example],
     *,
@@ -74,14 +87,14 @@ def export_examples(
     destination_name: str,
     output: str | Path,
     conversational: bool = False,
-) -> int:
+) -> ExportResult:
     return export_examples_with_summary(
         examples,
         format_name=format_name,
         destination_name=destination_name,
         output=output,
         conversational=conversational,
-    ).records
+    )
 
 
 def export_examples_with_summary(
@@ -162,7 +175,7 @@ def dpo_serializer(options: ExportOptions, example: Example) -> Iterable[JSON]:
 
     if options.conversational:
         yield {
-            "prompt": [{"role": "user", "content": prompt}],
+            "prompt": render_messages(example),
             "chosen": [{"role": "assistant", "content": chosen}],
             "rejected": [{"role": "assistant", "content": rejected}],
             "metadata": _dpo_metadata(example),
@@ -218,6 +231,15 @@ def _stringify_prompt_value(value: Any) -> str:
     if isinstance(value, dict | list):
         return _compact_json(value)
     return str(value)
+
+
+def _is_message_list(value: list[Any]) -> bool:
+    return all(
+        isinstance(item, Mapping)
+        and isinstance(item.get("role"), str)
+        and isinstance(item.get("content"), str)
+        for item in value
+    )
 
 
 def render_completion(example: Example) -> str:

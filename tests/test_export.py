@@ -13,6 +13,7 @@ from asi.export import (
     get_destination,
     get_format,
     render_completion,
+    render_messages,
     render_prompt,
 )
 from asi.types import Example
@@ -101,6 +102,16 @@ def test_render_prompt_compacts_dict_without_known_keys() -> None:
     assert render_prompt(example) == '{"labels":["yes","no"],"task":"classify"}'
 
 
+def test_render_messages_preserves_existing_message_array() -> None:
+    messages = [
+        {"role": "system", "content": "Follow policy."},
+        {"role": "user", "content": "Can I refund this account?"},
+    ]
+
+    assert render_messages(Example(input={"gen_ai.input.messages": messages})) == messages
+    assert render_messages(Example(input=messages)) == messages
+
+
 def test_render_completion_stringifies_expected_output() -> None:
     assert render_completion(Example(input="Prompt", expected={"answer": "Yes"})) == '{"answer":"Yes"}'
 
@@ -109,9 +120,9 @@ def test_raw_local_export_writes_example_dicts(tmp_path) -> None:
     output = tmp_path / "dataset.jsonl"
     examples = [Example(input={"q": "x"}, expected={"a": "y"}, metadata={"m": 1})]
 
-    count = export_examples(examples, format_name="raw", destination_name="local", output=output)
+    result = export_examples(examples, format_name="raw", destination_name="local", output=output)
 
-    assert count == 1
+    assert result.records == 1
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "expected": {"a": "y"},
         "input": {"q": "x"},
@@ -129,14 +140,15 @@ def test_prompt_completion_export_writes_trainer_records_without_metadata(tmp_pa
         )
     ]
 
-    count = export_examples(
+    result = export_examples(
         examples,
         format_name="prompt_completion",
         destination_name="local",
         output=output,
     )
 
-    assert count == 1
+    assert result.records == 1
+    assert result.skipped == 0
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "prompt": "Decide refund",
         "completion": '{"answer":"Deny automatic refund"}',
@@ -146,14 +158,14 @@ def test_prompt_completion_export_writes_trainer_records_without_metadata(tmp_pa
 def test_messages_export_writes_chat_records_without_metadata(tmp_path) -> None:
     output = tmp_path / "messages.jsonl"
 
-    count = export_examples(
+    result = export_examples(
         [Example(input="Question", expected="Answer", metadata={"judge": {"gap": 0.5}})],
         format_name="messages",
         destination_name="local",
         output=output,
     )
 
-    assert count == 1
+    assert result.records == 1
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "messages": [
             {"role": "user", "content": "Question"},
@@ -165,14 +177,15 @@ def test_messages_export_writes_chat_records_without_metadata(tmp_path) -> None:
 def test_dpo_export_writes_preference_records_with_metadata(tmp_path) -> None:
     output = tmp_path / "dpo.jsonl"
 
-    count = export_examples(
+    result = export_examples(
         [dpo_example()],
         format_name="dpo",
         destination_name="local",
         output=output,
     )
 
-    assert count == 1
+    assert result.records == 1
+    assert result.skipped == 0
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "prompt": "Explain the refund decision",
         "chosen": "Strong answer",
@@ -197,8 +210,9 @@ def test_dpo_export_uses_first_solver_attempts(tmp_path) -> None:
         {"role": "strong", "output": "Second strong answer", "attempt": 2, "metadata": {}}
     )
 
-    export_examples([example], format_name="dpo", destination_name="local", output=output)
+    result = export_examples([example], format_name="dpo", destination_name="local", output=output)
 
+    assert result.records == 1
     assert json.loads(output.read_text(encoding="utf-8"))["chosen"] == "Strong answer"
     assert json.loads(output.read_text(encoding="utf-8"))["rejected"] == "Weak answer"
 
@@ -206,7 +220,7 @@ def test_dpo_export_uses_first_solver_attempts(tmp_path) -> None:
 def test_dpo_conversational_export_writes_message_arrays(tmp_path) -> None:
     output = tmp_path / "dpo-messages.jsonl"
 
-    count = export_examples(
+    result = export_examples(
         [dpo_example()],
         format_name="dpo",
         destination_name="local",
@@ -214,11 +228,32 @@ def test_dpo_conversational_export_writes_message_arrays(tmp_path) -> None:
         conversational=True,
     )
 
-    assert count == 1
+    assert result.records == 1
     record = json.loads(output.read_text(encoding="utf-8"))
     assert record["prompt"] == [{"role": "user", "content": "Explain the refund decision"}]
     assert record["chosen"] == [{"role": "assistant", "content": "Strong answer"}]
     assert record["rejected"] == [{"role": "assistant", "content": "Weak answer"}]
+
+
+def test_dpo_conversational_export_preserves_prompt_messages(tmp_path) -> None:
+    output = tmp_path / "dpo-messages.jsonl"
+    messages = [
+        {"role": "system", "content": "Use the policy."},
+        {"role": "user", "content": "Can this account be refunded?"},
+    ]
+    example = dpo_example()
+    example.input = {"gen_ai.input.messages": messages}
+
+    result = export_examples(
+        [example],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+        conversational=True,
+    )
+
+    assert result.records == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["prompt"] == messages
 
 
 def test_dpo_export_skips_missing_solver_attempts(tmp_path) -> None:

@@ -8,6 +8,7 @@ from asi.export import (
     export_examples_with_summary,
     export_formats,
     render_completion,
+    render_messages,
     render_prompt,
 )
 from asi.models import (
@@ -57,5 +58,6 @@ __all__ = [
     "examples_from_otlp",
     "examples_from_span_jsonl",
     "render_completion",
+    "render_messages",
     "render_prompt",
 ]
