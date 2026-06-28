@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from asi.core import AgenticSelfInstruct
-from asi.export import export_destinations, export_examples, export_formats
+from asi.export import CHAT_TEMPLATES, export_destinations, export_examples, export_formats
 from asi.io import (
     export_run_result,
     export_seed_construction_result,
@@ -81,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Emit conversational preference records for format dpo",
     )
+    export_parser.add_argument(
+        "--chat-template",
+        choices=CHAT_TEMPLATES,
+        default="sharegpt",
+        help="SFT chat template: sharegpt or chatml",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -138,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                 destination_name=args.destination,
                 output=args.output,
                 conversational=args.conversational,
+                chat_template=args.chat_template,
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
