@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from asi.core import AgenticSelfInstruct
-from asi.export import export_destinations, export_examples_with_summary, export_formats
+from asi.export import export_destinations, export_examples, export_formats
 from asi.io import (
     export_run_result,
     export_seed_construction_result,
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "export":
         try:
             examples = read_jsonl(_export_input_path(args.from_path))
-            result = export_examples_with_summary(
+            result = export_examples(
                 examples,
                 format_name=args.format,
                 destination_name=args.destination,

@@ -88,23 +88,6 @@ def export_examples(
     output: str | Path,
     conversational: bool = False,
 ) -> ExportResult:
-    return export_examples_with_summary(
-        examples,
-        format_name=format_name,
-        destination_name=destination_name,
-        output=output,
-        conversational=conversational,
-    )
-
-
-def export_examples_with_summary(
-    examples: Iterable[Example],
-    *,
-    format_name: str,
-    destination_name: str,
-    output: str | Path,
-    conversational: bool = False,
-) -> ExportResult:
     if conversational and format_name != "dpo":
         raise ValueError("--conversational is only supported with format dpo")
     serializer = get_format(format_name)
@@ -220,9 +203,11 @@ def _serialize_examples(
 ) -> Iterable[Mapping[str, Any]]:
     for example in examples:
         try:
-            yield from serializer(options, example)
+            records = list(serializer(options, example))
         except SkipExample as exc:
             stats.skip(exc.reason)
+            continue
+        yield from records
 
 
 def _stringify_prompt_value(value: Any) -> str:
@@ -254,7 +239,10 @@ def _first_attempt_output(example: Example, key: str) -> str:
     first = attempts[0]
     if not isinstance(first, Mapping) or first.get("output") in (None, ""):
         raise SkipExample("no solver attempts")
-    return str(first["output"])
+    output = str(first["output"]).strip()
+    if not output:
+        raise SkipExample("no solver attempts")
+    return output
 
 
 def _dpo_metadata(example: Example) -> JSON:

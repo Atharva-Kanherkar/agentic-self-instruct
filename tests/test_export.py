@@ -8,7 +8,6 @@ from asi.cli import main
 from asi.export import (
     export_destinations,
     export_examples,
-    export_examples_with_summary,
     export_formats,
     get_destination,
     get_format,
@@ -259,7 +258,7 @@ def test_dpo_conversational_export_preserves_prompt_messages(tmp_path) -> None:
 def test_dpo_export_skips_missing_solver_attempts(tmp_path) -> None:
     output = tmp_path / "dpo.jsonl"
 
-    result = export_examples_with_summary(
+    result = export_examples(
         [Example(input="Prompt", metadata={})],
         format_name="dpo",
         destination_name="local",
@@ -275,8 +274,23 @@ def test_dpo_export_skips_missing_solver_attempts(tmp_path) -> None:
 def test_dpo_export_skips_empty_solver_attempts(tmp_path) -> None:
     output = tmp_path / "dpo.jsonl"
 
-    result = export_examples_with_summary(
+    result = export_examples(
         [dpo_example(metadata={"weak_attempts": []})],
+        format_name="dpo",
+        destination_name="local",
+        output=output,
+    )
+
+    assert result.records == 0
+    assert result.skipped == 1
+    assert result.skip_reasons == {"no solver attempts": 1}
+
+
+def test_dpo_export_skips_whitespace_only_solver_output(tmp_path) -> None:
+    output = tmp_path / "dpo.jsonl"
+
+    result = export_examples(
+        [dpo_example(weak="   ")],
         format_name="dpo",
         destination_name="local",
         output=output,
@@ -290,7 +304,7 @@ def test_dpo_export_skips_empty_solver_attempts(tmp_path) -> None:
 def test_dpo_export_skips_identical_chosen_and_rejected(tmp_path) -> None:
     output = tmp_path / "dpo.jsonl"
 
-    result = export_examples_with_summary(
+    result = export_examples(
         [dpo_example(weak="Same answer", strong="Same answer")],
         format_name="dpo",
         destination_name="local",
