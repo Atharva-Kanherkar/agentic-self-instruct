@@ -1,6 +1,13 @@
 """DataSmith SDK."""
 
 from asi.core import AgenticSelfInstruct, AcceptancePolicy
+from asi.export import (
+    export_destinations,
+    export_examples,
+    export_formats,
+    render_completion,
+    render_prompt,
+)
 from asi.models import (
     DeterministicChallenger,
     DeterministicJudge,
@@ -30,6 +37,9 @@ __all__ = [
     "DeterministicSeedJudge",
     "DeterministicSolver",
     "Example",
+    "export_destinations",
+    "export_examples",
+    "export_formats",
     "JudgeVerdict",
     "RejectedSeed",
     "RejectedExample",
@@ -42,4 +52,6 @@ __all__ = [
     "WebSearchSignal",
     "examples_from_otlp",
     "examples_from_span_jsonl",
+    "render_completion",
+    "render_prompt",
 ]

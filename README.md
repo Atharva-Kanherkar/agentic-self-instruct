@@ -75,6 +75,7 @@ attempts, judge output, and feedback for later challenger attempts.
 - Weak and strong solver rollouts
 - Judge-driven acceptance policy
 - Accepted and rejected JSONL artifacts
+- Trainer-ready dataset export from accepted artifacts
 - OTLP JSON and flattened span JSONL ingestion
 - CLI for local demo runs and trace ingestion
 - Tests for IO, CLI, ingestion, prompt leakage, judge validation, and partial-run reporting
@@ -131,6 +132,12 @@ Run the deterministic demo with no API keys:
 datasmith run --seeds runs/legal-seeds/seeds.jsonl --output-dir runs/demo --target-count 2 --local-demo
 ```
 
+Export accepted examples into a trainer-ready JSONL dataset:
+
+```bash
+datasmith export --from runs/demo --format prompt_completion --to local --output runs/demo/dataset.jsonl
+```
+
 Convert OTLP JSON traces to seed examples:
 
 ```bash
@@ -159,6 +166,11 @@ The run writes three artifacts:
 - `accepted.jsonl`: examples that passed the policy
 - `rejected.jsonl`: failed candidates with solver attempts, judge output, and reason codes
 - `summary.json`: accepted count, rejected count, attempts, score gaps, and feedback
+
+Use `datasmith export --from <run-output-dir | accepted.jsonl> --format prompt_completion --to local
+--output dataset.jsonl` to convert accepted artifacts into trainer JSONL. The `messages` format
+writes chat-style records. The `raw` format is available when you explicitly want to preserve the
+current `Example.to_dict()` artifact shape.
 
 The seed-construction command writes:
 
@@ -453,17 +465,6 @@ Not implemented yet:
 - Microsoft Research, [AgentInstruct: Toward Generative Teaching with Agentic Flows](https://arxiv.org/abs/2407.03502)
 - Braintrust, [Agent observability: the complete guide for 2026](https://www.braintrust.dev/articles/agent-observability-complete-guide-2026)
 - Grafana Labs, [Observing agentic AI workflows with Grafana Cloud, OpenTelemetry, and the OpenAI Agents SDK](https://grafana.com/blog/observing-agentic-ai-workflows-with-grafana-cloud-opentelemetry-and-the-openai-agents-sdk/)
-
-## Issues and Contributing
-
-Please use the [GitHub issue tracker](https://github.com/Atharva-Kanherkar/datasmith/issues)
-to report bugs, request features, or ask usage questions. Contributions are welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md) for development setup and project guidelines.
-
-## Status
-
-Alpha. The public API is intentionally small and typed. Expect iteration as the Autodata and agent
-observability ecosystems mature.
 
 ## License
 
