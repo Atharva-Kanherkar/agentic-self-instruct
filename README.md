@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/datasmith-banner.png" alt="DataSmith banner" width="100%">
+</p>
+
 # DataSmith
 
 DataSmith is a provider-agnostic Python SDK and CLI for building synthetic training and evaluation
